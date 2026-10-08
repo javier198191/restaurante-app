@@ -12,6 +12,7 @@ export interface PedidoPendiente {
   mesa_id: number
   usuario_id: string
   items: OrderItem[]
+  mesero_nombre?: string | null
   createdAt?: string
 }
 

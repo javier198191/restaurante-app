@@ -1,13 +1,13 @@
-import { supabase } from './supabase'
 import { getQueue, removeFromQueue } from './offlineQueue'
+import { callCrearPedido } from './orders'
 
 let isSyncing = false
 
 /**
  * Recorre la cola de pedidos pendientes en IndexedDB e intenta enviarlos
- * a Supabase usando la función RPC idempotente 'crear_pedido_completo'.
+ * a Supabase usando la función centralizada callCrearPedido.
  * 1. Lee la cola con getQueue().
- * 2. Para cada pedido, llama crear_pedido_completo.
+ * 2. Para cada pedido, llama callCrearPedido(pedido).
  * 3. Si tiene éxito, lo borra con removeFromQueue().
  * 4. Si falla, lo mantiene en la cola y continúa con el siguiente sin romper el ciclo.
  */
@@ -21,12 +21,7 @@ export async function syncPendingOrders(): Promise<void> {
 
     for (const pedido of queue) {
       try {
-        const { data, error } = await supabase.rpc('crear_pedido_completo', {
-          cliente_uuid: pedido.cliente_uuid,
-          mesa_id: pedido.mesa_id,
-          usuario_id: pedido.usuario_id,
-          items: pedido.items,
-        })
+        const { data, error } = await callCrearPedido(pedido)
 
         if (error) {
           console.warn(
@@ -35,7 +30,7 @@ export async function syncPendingOrders(): Promise<void> {
           continue
         }
 
-        if (data) {
+        if (data !== undefined && data !== null) {
           await removeFromQueue(pedido.cliente_uuid)
           console.info(
             `Pedido ${pedido.cliente_uuid} sincronizado exitosamente (ID de pedido: ${data}).`

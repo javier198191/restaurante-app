@@ -93,6 +93,7 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
   const [pedidoActivo, setPedidoActivo] = useState<PedidoActivoRaw | null>(null)
   const [incluirPropina, setIncluirPropina] = useState<boolean>(true)
   const [exitoCobro, setExitoCobro] = useState<boolean>(false)
+  const [showConfirm, setShowConfirm] = useState<boolean>(false)
 
   // 2. Cargar el pedido activo de la mesa
   const cargarResumen = useCallback(async () => {
@@ -232,15 +233,8 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
 
   // 6. Acción de Cobrar y Liberar Mesa (RPC cerrar_mesa_y_cobrar)
   // Operación directa de base de datos sin dependencias de red local ni impresión física
-  const handleCobrarYLiberar = async () => {
+  const handleConfirmarCobro = async () => {
     if (cobrando) return
-
-    const confirmar = window.confirm(
-      `¿Confirmas el cobro de ${formatCOP(total)} y la liberación de la Mesa ${
-        pedidoActivo?.mesas?.numero ?? mesaId
-      }?`
-    )
-    if (!confirmar) return
 
     setCobrando(true)
     setError(null)
@@ -249,20 +243,33 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
       const { error: rpcErr } = await (supabase.rpc as unknown as (
         fn: string,
         params: Record<string, unknown>
-      ) => Promise<{ error: { message: string; details?: string; hint?: string } | null }>)(
+      ) => Promise<{ error: { message: string; details?: string; hint?: string; code?: string } | null }>)(
         'cerrar_mesa_y_cobrar',
         { p_mesa_id: Number(mesaId) }
       )
 
       if (rpcErr) {
         console.error('Error RPC:', rpcErr.message, rpcErr.details, rpcErr.hint)
-        alert('Error SQL: ' + rpcErr.message)
-        setError(`No se pudo cerrar la mesa: ${rpcErr.message}`)
+        const isPermissionError =
+          (rpcErr as any).code === '42501' ||
+          JSON.stringify(rpcErr).includes('42501') ||
+          rpcErr.message?.toLowerCase().includes('no autorizado') ||
+          (rpcErr.details && rpcErr.details.toLowerCase().includes('no autorizado'))
+
+        if (isPermissionError) {
+          alert('Tu usuario no tiene permiso para cobrar')
+          setError('Tu usuario no tiene permiso para cobrar')
+        } else {
+          alert('Error SQL: ' + rpcErr.message)
+          setError(`No se pudo cerrar la mesa: ${rpcErr.message}`)
+        }
         setCobrando(false)
+        setShowConfirm(false)
         return
       }
 
       setExitoCobro(true)
+      setShowConfirm(false)
 
       // Invocar inmediatamente onCobroExitoso o navegación de vuelta al mapa
       if (onCobroExitoso) {
@@ -273,16 +280,34 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
         window.location.href = '/mesas'
       }
     } catch (err: unknown) {
-      const rpcError = err as { message?: string; details?: string; hint?: string }
+      const rpcError = err as { message?: string; details?: string; hint?: string; code?: string }
       const msg = rpcError?.message || (err instanceof Error ? err.message : 'Error al liquidar mesa')
       console.error('Error RPC:', rpcError?.message, rpcError?.details, rpcError?.hint)
-      alert('Error SQL: ' + msg)
-      setError(`No se pudo cerrar la mesa: ${msg}`)
+
+      const fullErrStr = typeof err === 'string' ? err : JSON.stringify(err) + ' ' + msg
+      const isPermissionError =
+        rpcError?.code === '42501' ||
+        fullErrStr.includes('42501') ||
+        msg.toLowerCase().includes('no autorizado')
+
+      if (isPermissionError) {
+        alert('Tu usuario no tiene permiso para cobrar')
+        setError('Tu usuario no tiene permiso para cobrar')
+      } else {
+        alert('Error SQL: ' + msg)
+        setError(`No se pudo cerrar la mesa: ${msg}`)
+      }
       setCobrando(false)
+      setShowConfirm(false)
     }
   }
 
-  const numeroMesa = pedidoActivo?.mesas?.numero ?? mesaId
+  // Sanitizar número de mesa para evitar duplicación tipo "Mesa Mesa X"
+  const numeroMesa = useMemo(() => {
+    const raw = pedidoActivo?.mesas?.numero ?? mesaId
+    const str = String(raw).trim()
+    return str.toLowerCase().startsWith('mesa') ? str.replace(/^mesa\s*/i, '').trim() : str
+  }, [pedidoActivo?.mesas?.numero, mesaId])
 
   return (
     <div className="w-full max-w-4xl mx-auto px-4 py-6 text-left flex flex-col gap-6">
@@ -371,7 +396,7 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
             </button>
             <button
               type="button"
-              onClick={handleCobrarYLiberar}
+              onClick={() => setShowConfirm(true)}
               disabled={cobrando}
               className="w-full sm:w-auto min-h-[44px] px-6 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs transition-all cursor-pointer"
             >
@@ -483,7 +508,7 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
           {/* Botón Gigante: Cobrar y Liberar Mesa */}
           <button
             type="button"
-            onClick={handleCobrarYLiberar}
+            onClick={() => setShowConfirm(true)}
             disabled={cobrando || exitoCobro}
             className="w-full min-h-[58px] sm:min-h-[64px] px-6 py-4 rounded-2xl font-black text-lg sm:text-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white transition-all shadow-xl shadow-emerald-950/60 border-2 border-emerald-400/40 disabled:bg-slate-700 disabled:text-slate-500 flex items-center justify-center gap-3 cursor-pointer"
           >
@@ -501,6 +526,64 @@ export const ResumenMesa: React.FC<ResumenMesaProps> = ({
             )}
           </button>
         </>
+      )}
+
+      {/* Modal de Confirmación de Cobro */}
+      {showConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => {
+            if (!cobrando) setShowConfirm(false)
+          }}
+        >
+          <div
+            className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl max-w-md w-full p-6 text-left flex flex-col gap-5 transform transition-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Título */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-xl shrink-0">
+                💳
+              </div>
+              <h3 className="text-xl font-black text-white">Confirmar Cobro</h3>
+            </div>
+
+            {/* Texto */}
+            <p className="text-slate-300 text-sm leading-relaxed">
+              ¿Confirmas el cobro de{' '}
+              <strong className="text-emerald-400 font-mono font-bold">{formatCOP(total)}</strong>{' '}
+              y la liberación de la{' '}
+              <strong className="text-white font-bold">Mesa {numeroMesa}</strong>?
+            </p>
+
+            {/* Botones */}
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-700/60">
+              <button
+                type="button"
+                onClick={() => setShowConfirm(false)}
+                disabled={cobrando}
+                className="px-5 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 active:scale-95 text-slate-200 hover:text-white font-bold text-sm transition-all cursor-pointer disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmarCobro}
+                disabled={cobrando}
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-sm transition-all shadow-lg shadow-emerald-950/50 cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              >
+                {cobrando ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Confirmando...</span>
+                  </>
+                ) : (
+                  <span>Confirmar</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

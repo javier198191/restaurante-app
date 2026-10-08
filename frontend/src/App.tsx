@@ -59,7 +59,7 @@ function MainContent() {
             </span>
           </div>
 
-          {/* Selector de pantalla (Mapa de Mesas / Toma de pedidos / Caja) */}
+          {/* Selector de pantalla (Mapa de Mesas / Tablet Caja) */}
           <div className="flex items-center bg-slate-900 p-1 rounded-xl border border-slate-700">
             <button
               type="button"
@@ -71,17 +71,6 @@ function MainContent() {
               }`}
             >
               🗺️ Mapa Mesas
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedView('tomar-pedido')}
-              className={`min-h-[36px] px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                activeView === 'tomar-pedido'
-                  ? 'bg-blue-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              🍽️ Toma de Pedidos
             </button>
             <button
               type="button"
