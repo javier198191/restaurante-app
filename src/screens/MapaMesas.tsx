@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 
 export interface Mesa {
@@ -17,6 +17,9 @@ export const MapaMesas: React.FC<MapaMesasProps> = ({ onSelectMesa }) => {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
+  const [cajaAbierta, setCajaAbierta] = useState<boolean | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const navTimerRef = useRef<number | null>(null)
 
   // 1. Carga de mesas y suscripción Realtime
   const cargarMesas = useCallback(async () => {
@@ -42,11 +45,33 @@ export const MapaMesas: React.FC<MapaMesasProps> = ({ onSelectMesa }) => {
     }
   }, [])
 
+  // Verificar si hay turno de caja abierto
+  const verificarEstadoCaja = useCallback(async () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: err } = await (supabase as any)
+        .from('turnos_caja')
+        .select('id, estado')
+        .eq('estado', 'abierto')
+        .maybeSingle()
+
+      if (err) {
+        console.warn('Error al verificar turno de caja:', err.message)
+        return
+      }
+
+      setCajaAbierta(data !== null)
+    } catch (err) {
+      console.warn('Error al consultar estado de turnos_caja:', err)
+    }
+  }, [])
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void cargarMesas()
+    void verificarEstadoCaja()
 
-    const channel = supabase
+    const channelMesas = supabase
       .channel('mesas_realtime')
       .on(
         'postgres_changes',
@@ -61,22 +86,62 @@ export const MapaMesas: React.FC<MapaMesasProps> = ({ onSelectMesa }) => {
       )
       .subscribe()
 
+    const channelCaja = supabase
+      .channel('mapa_turnos_caja')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'turnos_caja' },
+        () => {
+          void verificarEstadoCaja()
+        }
+      )
+      .subscribe()
+
     return () => {
-      void supabase.removeChannel(channel)
+      void supabase.removeChannel(channelMesas)
+      void supabase.removeChannel(channelCaja)
+      if (navTimerRef.current) {
+        clearTimeout(navTimerRef.current)
+      }
     }
-  }, [cargarMesas])
+  }, [cargarMesas, verificarEstadoCaja])
 
   // 3. Manejo de interacción táctil con cada mesa
   const handleMesaClick = (mesa: Mesa) => {
     if (mesa.estado === 'libre') {
-      // Mesa libre: ir a tomar pedido con el ID de la mesa
+      // Si la caja no está abierta, avisar de manera no bloqueante o mediante toast
+      if (cajaAbierta === false) {
+        setToast('⚠️ La caja aún no ha iniciado turno. Recuerda que no se podrán enviar comandas hasta abrir caja.')
+        sessionStorage.setItem('aviso_caja_cerrada', '1')
+
+        // Si ya había un temporizador corriendo (segundo toque), navegar inmediatamente
+        if (navTimerRef.current) {
+          clearTimeout(navTimerRef.current)
+          navTimerRef.current = null
+          if (onSelectMesa) {
+            onSelectMesa(mesa.id, 'libre')
+          }
+          return
+        }
+
+        // Navegación no bloqueante: muestra el toast y avanza tras una breve pausa
+        navTimerRef.current = window.setTimeout(() => {
+          navTimerRef.current = null
+          if (onSelectMesa) {
+            onSelectMesa(mesa.id, 'libre')
+          }
+        }, 800)
+        return
+      }
+
+      // Mesa libre con caja abierta
       if (onSelectMesa) {
         onSelectMesa(mesa.id, 'libre')
       } else {
         console.log('Navegar a tomar pedido', mesa.id)
       }
     } else {
-      // Mesa ocupada: ruta de resumen (temporalmente log como requiere la especificación)
+      // Mesa ocupada: ruta de resumen
       console.log('Navegar a resumen de mesa', mesa.id)
       if (onSelectMesa) {
         onSelectMesa(mesa.id, 'ocupada')
@@ -132,6 +197,52 @@ export const MapaMesas: React.FC<MapaMesasProps> = ({ onSelectMesa }) => {
           </button>
         </div>
       </div>
+
+      {/* Mensaje de advertencia global si la caja no ha iniciado turno */}
+      {cajaAbierta === false && (
+        <div
+          role="alert"
+          className="p-4 rounded-2xl bg-amber-950/50 border-2 border-amber-500/50 text-amber-200 text-sm flex items-center justify-between gap-3 shadow-lg animate-in fade-in duration-200"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl p-2 bg-amber-500/20 border border-amber-500/30 rounded-xl flex-shrink-0">
+              ⚠️
+            </span>
+            <div>
+              <h4 className="font-bold text-amber-300 text-sm sm:text-base">
+                Turno de caja cerrado
+              </h4>
+              <p className="text-xs sm:text-sm text-amber-200/90 mt-0.5">
+                La caja aún no ha iniciado turno. Pide al cajero o administrador que abra el turno en Control de Caja antes de enviar pedidos.
+              </p>
+            </div>
+          </div>
+          <span className="hidden sm:inline-flex px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 font-bold text-xs uppercase tracking-wider border border-amber-500/30 flex-shrink-0">
+            Caja Inactiva
+          </span>
+        </div>
+      )}
+
+      {/* Toast flotante de aviso no bloqueante */}
+      {toast && (
+        <div className="fixed bottom-6 inset-x-4 max-w-lg mx-auto z-50 pointer-events-auto animate-in fade-in slide-in-from-bottom duration-200">
+          <div className="bg-slate-900/95 border-2 border-amber-500 text-amber-100 px-4 py-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3 backdrop-blur-md">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl flex-shrink-0">⚠️</span>
+              <span className="text-xs sm:text-sm font-semibold leading-snug">
+                {toast}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setToast(null)}
+              className="text-xs font-bold px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg border border-slate-700 flex-shrink-0 transition-all"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Manejo de estados de carga y error */}
       {loading && mesas.length === 0 ? (

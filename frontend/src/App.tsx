@@ -7,10 +7,15 @@ import MapaMesas from './screens/MapaMesas'
 import ResumenMesa from './screens/ResumenMesa'
 import TomaPedido from './screens/TomaPedido'
 import Caja from './screens/Caja'
+import ControlCaja from './screens/ControlCaja'
+import Inventario from './screens/Inventario'
+import Personal from './screens/Personal'
 
 function MainContent() {
   const { user, role, loading } = useAuth()
-  const [selectedView, setSelectedView] = useState<'mapa' | 'tomar-pedido' | 'caja' | 'resumen' | null>(null)
+  const [selectedView, setSelectedView] = useState<
+    'mapa' | 'tomar-pedido' | 'caja' | 'resumen' | 'control-caja' | 'inventario' | 'personal' | null
+  >(null)
   const [mesaSeleccionada, setMesaSeleccionada] = useState<number>(1)
 
   // Vista por defecto: Mapa de Mesas para el mesero, Caja para el cajero
@@ -83,6 +88,45 @@ function MainContent() {
             >
               🖨️ Tablet Caja
             </button>
+            {(role === 'cajero' || role === 'admin') && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSelectedView('control-caja')}
+                  className={`min-h-[36px] px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    activeView === 'control-caja'
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  💰 Control de Caja
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedView('inventario')}
+                  className={`min-h-[36px] px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    activeView === 'inventario'
+                      ? 'bg-blue-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  📦 Inventario
+                </button>
+              </>
+            )}
+            {role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => setSelectedView('personal')}
+                className={`min-h-[36px] px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                  activeView === 'personal'
+                    ? 'bg-blue-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                👥 Personal
+              </button>
+            )}
           </div>
         </div>
 
@@ -121,6 +165,12 @@ function MainContent() {
           />
         ) : activeView === 'tomar-pedido' ? (
           <TomaPedido mesaIdInicial={mesaSeleccionada} />
+        ) : activeView === 'control-caja' ? (
+          <ControlCaja />
+        ) : activeView === 'inventario' ? (
+          <Inventario />
+        ) : activeView === 'personal' ? (
+          <Personal />
         ) : (
           <Caja />
         )}

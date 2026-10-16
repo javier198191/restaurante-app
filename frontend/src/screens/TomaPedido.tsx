@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import { useMenu } from '../hooks/useMenu'
 import { useCart } from '../hooks/useCart'
 import { useAuth } from '../context/AuthContext'
-import { submitOrder } from '../lib/orders'
+import { submitOrder, isCajaCerradaError } from '../lib/orders'
 import { usePendingCount } from '../lib/offlineQueue'
 
 import CategoryTabs from '../components/pedido/CategoryTabs'
@@ -54,6 +54,14 @@ export const TomaPedido: React.FC<TomaPedidoProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('')
   const [submitting, setSubmitting] = useState<boolean>(false)
   const [notification, setNotification] = useState<NotificationState | null>(null)
+  const [modalCajaCerrada, setModalCajaCerrada] = useState<boolean>(false)
+  const [alertaCajaCerrada, setAlertaCajaCerrada] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && sessionStorage.getItem('aviso_caja_cerrada') === '1') {
+      sessionStorage.removeItem('aviso_caja_cerrada')
+      return true
+    }
+    return false
+  })
 
   // Filtrado 100% en memoria
   const productosFiltrados = useMemo(() => {
@@ -70,6 +78,22 @@ export const TomaPedido: React.FC<TomaPedidoProps> = ({
       return true
     })
   }, [productos, selectedCategoriaId, searchQuery])
+
+  // Validación estricta para evitar agregar platos agotados
+  const handleAddToCart = useCallback(
+    (producto_id: number) => {
+      const prod = productos.find((p) => p.id === producto_id)
+      if (prod && prod.disponible === false) {
+        setNotification({
+          type: 'error',
+          message: `⚠️ El plato "${prod.nombre}" está agotado y no se puede agregar.`,
+        })
+        return
+      }
+      addItem(producto_id)
+    },
+    [productos, addItem]
+  )
 
   // Manejo de envío a cocina
   const handleEnviarCocina = async () => {
@@ -97,24 +121,40 @@ export const TomaPedido: React.FC<TomaPedidoProps> = ({
 
       if (res.success) {
         clearCart()
+        setAlertaCajaCerrada(false)
         setNotification({
           type: 'success',
           message: `✅ Pedido #${res.pedidoId} enviado con éxito directo a cocina.`,
         })
+      } else if ('cajaCerrada' in res && res.cajaCerrada) {
+        // Caja cerrada detectada por la regla de negocio de la RPC
+        setModalCajaCerrada(true)
+        setAlertaCajaCerrada(true)
       } else if (res.pending) {
         clearCart()
         setNotification({
           type: 'pending',
           message: '📦 Guardado, se enviará cuando haya señal.',
         })
+      } else {
+        setNotification({
+          type: 'error',
+          message: `❌ ${res.error || 'Error al enviar el pedido'}`,
+        })
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error inesperado al enviar el pedido'
-      setNotification({
-        type: 'error',
-        message: `❌ ${message}`,
-      })
+      if (isCajaCerradaError(err)) {
+        setModalCajaCerrada(true)
+        setAlertaCajaCerrada(true)
+      } else {
+        const message = err instanceof Error ? err.message : 'Error inesperado al enviar el pedido'
+        setNotification({
+          type: 'error',
+          message: `❌ ${message}`,
+        })
+      }
     } finally {
+      // Siempre desbloquea el botón para evitar congelamiento de la interfaz
       setSubmitting(false)
     }
   }
@@ -175,6 +215,68 @@ export const TomaPedido: React.FC<TomaPedidoProps> = ({
         )}
       </div>
 
+      {/* Alerta destacada si la caja está cerrada */}
+      {alertaCajaCerrada && (
+        <div
+          role="alert"
+          className="p-4 rounded-2xl text-sm font-semibold flex items-center justify-between gap-3 shadow-xl bg-red-950/90 border-2 border-red-500 text-red-200 animate-in fade-in duration-200"
+        >
+          <div className="flex items-center gap-3">
+            <span className="text-2xl flex-shrink-0">⛔</span>
+            <span className="leading-snug">
+              ⛔ Caja cerrada: No puedes tomar pedidos porque no hay un turno de caja abierto. Pide al cajero o administrador que abra el turno en Control de Caja.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAlertaCajaCerrada(false)}
+            title="Cerrar aviso"
+            className="text-xs px-2.5 py-1.5 rounded-xl bg-red-900/60 hover:bg-red-900 text-red-200 font-bold border border-red-700/80 transition-all flex-shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Modal destacado cuando se rechaza el envío por caja cerrada */}
+      {modalCajaCerrada && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+        >
+          <div className="bg-slate-900 border-2 border-red-500 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl text-slate-100 flex flex-col gap-5">
+            <div className="flex items-start gap-4">
+              <span className="text-3xl p-3 bg-red-500/20 border border-red-500/40 rounded-2xl flex-shrink-0">
+                ⛔
+              </span>
+              <div className="flex-1">
+                <h3 className="text-xl sm:text-2xl font-black text-red-400 tracking-tight">
+                  Caja Cerrada
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Regla de negocio: se requiere turno de caja activo
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-red-950/60 border border-red-800/80 text-sm sm:text-base font-semibold text-red-200 leading-relaxed">
+              ⛔ Caja cerrada: No puedes tomar pedidos porque no hay un turno de caja abierto. Pide al cajero o administrador que abra el turno en Control de Caja.
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setModalCajaCerrada(false)}
+                className="min-h-[44px] px-6 py-2.5 rounded-xl font-bold text-sm bg-red-600 hover:bg-red-500 active:scale-95 text-white transition-all shadow-lg shadow-red-600/30"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Notificación de envío */}
       {notification && (
         <div
@@ -227,7 +329,7 @@ export const TomaPedido: React.FC<TomaPedidoProps> = ({
       {/* Grid de productos */}
       <ProductGrid
         productos={productosFiltrados}
-        onAddToCart={addItem}
+        onAddToCart={handleAddToCart}
         cartItems={items}
       />
 

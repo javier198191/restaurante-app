@@ -4,6 +4,7 @@ import { addToQueue, type OrderItem, type PedidoPendiente } from './offlineQueue
 export type SubmitOrderResult =
   | { success: true; pedidoId: number; pending?: false }
   | { success: false; pending: true; error?: string }
+  | { success: false; pending: false; cajaCerrada: true; error: string }
 
 export interface CrearPedidoParams {
   cliente_uuid: string
@@ -14,10 +15,25 @@ export interface CrearPedidoParams {
 }
 
 /**
+ * Determina si un error de Supabase/Postgres corresponde a la falta de turno de caja abierto.
+ */
+export function isCajaCerradaError(err: unknown): boolean {
+  if (!err) return false
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'object' && err !== null && 'message' in err
+        ? String((err as { message: unknown }).message)
+        : String(err)
+  return /no hay turno de caja abierto/i.test(msg)
+}
+
+/**
  * Función centralizada para invocar la RPC 'crear_pedido_completo' en Supabase.
  * Es el único punto en todo el proyecto donde se llama a este RPC.
  */
 export async function callCrearPedido(pedido: CrearPedidoParams) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return await (supabase.rpc as any)('crear_pedido_completo', {
     p_cliente_uuid: pedido.cliente_uuid,
     p_mesa_id: pedido.mesa_id,
@@ -32,7 +48,8 @@ export async function callCrearPedido(pedido: CrearPedidoParams) {
  * 1. Genera un cliente_uuid único con crypto.randomUUID().
  * 2. Intenta llamar la RPC 'crear_pedido_completo' mediante callCrearPedido().
  * 3. Si tiene éxito, devuelve { success: true, pedidoId }.
- * 4. Si falla por red (catch), encola el pedido en IndexedDB y devuelve { success: false, pending: true }.
+ * 4. Si la RPC responde que no hay turno de caja abierto, NO lo encola y devuelve { success: false, pending: false, cajaCerrada: true }.
+ * 5. Si falla por red (catch), encola el pedido en IndexedDB y devuelve { success: false, pending: true }.
  */
 export async function submitOrder(
   mesa_id: number,
@@ -77,7 +94,27 @@ export async function submitOrder(
       pedidoId: Number(data),
     }
   } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err)
+    const errorMsg =
+      err instanceof Error
+        ? err.message
+        : typeof err === 'object' && err !== null && 'message' in err
+          ? String((err as { message: unknown }).message)
+          : String(err)
+
+    // Si la RPC responde con error de caja cerrada, capturar de inmediato y NO agregar a offlineQueue
+    if (isCajaCerradaError(err)) {
+      console.warn(
+        'Rechazado por regla de negocio: No hay turno de caja abierto. No se agrega a la cola offline (offlineQueue):',
+        errorMsg
+      )
+      return {
+        success: false,
+        pending: false,
+        cajaCerrada: true,
+        error: errorMsg,
+      }
+    }
+
     console.warn(
       'No se pudo completar el pedido en Supabase (posible falla de red). Guardando en cola local:',
       err

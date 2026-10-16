@@ -102,6 +102,103 @@ export interface Database {
           impreso?: boolean
         }
       }
+      insumos: {
+        Row: Insumo
+        Insert: {
+          id?: number
+          nombre: string
+          unidad: string
+          stock_actual?: number
+          stock_minimo?: number
+          costo_unitario?: number
+          activo?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          nombre?: string
+          unidad?: string
+          stock_actual?: number
+          stock_minimo?: number
+          costo_unitario?: number
+          activo?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
+      receta: {
+        Row: Receta
+        Insert: {
+          id?: number
+          producto_id: number
+          insumo_id: number
+          cantidad: number
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          producto_id?: number
+          insumo_id?: number
+          cantidad?: number
+          created_at?: string
+        }
+        Relationships: []
+      }
+      movimientos_inventario: {
+        Row: MovimientoInventario
+        Insert: {
+          id?: number
+          insumo_id: number
+          tipo: string
+          cantidad: number
+          motivo?: string | null
+          pedido_id?: number | null
+          fecha?: string
+        }
+        Update: {
+          id?: number
+          insumo_id?: number
+          tipo?: string
+          cantidad?: number
+          motivo?: string | null
+          pedido_id?: number | null
+          fecha?: string
+        }
+        Relationships: []
+      }
     }
   }
 }
+
+export interface Insumo {
+  id: number
+  nombre: string
+  unidad: 'porcion' | 'und' | 'g' | 'kg' | 'ml' | 'l' | string
+  stock_actual: number
+  stock_minimo: number
+  costo_unitario: number
+  activo: boolean
+  created_at?: string
+}
+
+export interface Receta {
+  id: number
+  producto_id: number
+  insumo_id: number
+  cantidad: number
+  created_at?: string
+  insumos?: Insumo | null
+  productos?: Producto | null
+}
+
+export interface MovimientoInventario {
+  id: number
+  insumo_id: number
+  tipo: 'entrada' | 'merma' | 'consumo' | 'ajuste_positivo' | 'ajuste_negativo' | string
+  cantidad: number
+  motivo?: string | null
+  pedido_id?: number | null
+  fecha?: string
+  insumos?: Insumo | null
+}
+
